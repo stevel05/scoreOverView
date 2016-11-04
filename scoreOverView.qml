@@ -18,13 +18,12 @@
 
 import QtQuick 2.3
 import QtQuick.Controls 1.2
-import QtQuick.Dialogs 1.2
 import FileIO 1.0
 import QtQuick.Window 2.2
 import MuseScore 1.0
 
 MuseScore {
-    description : "Simple overview of a score"
+    description : "Simple overview of a score showing populated and empty measures and rehearsal marks.  Allows jumping to a measure in a part and selecting of measures or ranges."
     menuPath : "Plugins.scoreOverView"
 	
 	
@@ -255,7 +254,7 @@ MuseScore {
                                 onPressed : {
                                     rSelectionHighlight.color = "Blue";
                                     var colWidth = (acWin.width - 85) / (measureTicks.length - 1)
-                                    if (mouse.x < 65 || mouse.x > 65 + colWidth * (measureTicks.length - 1)) {
+									if (mouse.x < 65 || mouse.x > acWin.width - 20) {
                                         return;
                                     }
                                     if (mouse.y < 0 || mouse.y > column1.rowHeight * curScore.parts.length) {
