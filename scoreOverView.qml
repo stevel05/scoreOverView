@@ -15,18 +15,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+//
+//Canvas version
+//
 
 import QtQuick 2.3
 import QtQuick.Controls 1.2
 import FileIO 1.0
 import QtQuick.Window 2.2
+import QtQuick.Controls.Styles 1.0
 import MuseScore 1.0
+import Qt.labs.settings 1.0
+import QtQuick.Dialogs 1.2
 
 MuseScore {
-    description : "Simple overview of a score showing populated and empty measures and rehearsal marks.  Allows jumping to a measure in a part and selecting of measures or ranges."
+    description : "Simple overview of a score showing populated and empty measures time signatures and  rehearsal marks.  Allows jumping to a measure in a part and selecting of measures or ranges."
     menuPath : "Plugins.scoreOverView"
-	
-	
+
     property var selectedElement : null
     property var selectedPart : null
     property var measureTicks : ([])
@@ -34,481 +39,571 @@ MuseScore {
     property var settings : ({})
     property var trackMeasures : ([])
 
-    onRun : {
+    pluginType : "dock"
+    dockArea : "bottom"
 
-        init();
+    // onRun : {
+
+    // }
+    Settings {
+        id : settings
+        category : "pluginSettings"
+        property bool showMeasures : true
+        property bool showKeyChanges : true
+        property bool showTempo : true
+        property bool showTempoMarks : false
+        property bool showTimeSig : true
+        property bool showRMarks : true
     }
 
-    ApplicationWindow {
+    ScrollView {
+        id : mainScrollView
+        width : parent.parent ? parent.parent.width - 15 : 1000
+        height : parent.parent ? parent.parent.height : 150
+        property var pressed : false
 
-        id : acWin
-        width : 800
-        height : 150
-        title : "scoreOverView"
+        __horizontalScrollBar.onHandlePressedChanged : {
+            pressed = !pressed;
+            if (pressed) {
+                canvasPartNames.visible = true;
+            } else {
+                canvasPartNames.visible = false;
+            }
+        }
+        __horizontalScrollBar.onValueChanged : {
+            canvasPartNames.x = __horizontalScrollBar.value + 5;
+        }
 
         Rectangle {
-            anchors.fill : parent
-            border.width : 2
-            border.color : "#101010"
-            Rectangle {
-                id : mainBg
-                anchors.fill : parent
-                anchors.margins : 2
+            id : mainBg
 
-                property var col1Width : 60
-                property var col2Width : 75
-                color : "#e0e0e0"
-                property var column : null
-                property var rows : []
-                property var rMarks : null
-                property var lastMeasureHdr : null
+            property var col1Width : 60
+            property var col2Width : 75
+            color : "#e0e0e0"
+
+            property var column1 : ([])
+            property var rows : {
+                var r = [];
+                r[0] = [];
+                return r;
+            }
+            property var rMarks : ([])
+            property var timeSigs : ([])
+            property var tempos : ([])
+            property var tempoMarks : ([])
+            property var keyChanges : ([])
+            property var measureHdr : ([])
+            property var lastMeasureHdr : null
+            property var lblTags : ([])
+            property var dataArea : ({
+                x : 0,
+                y : 0,
+                width : 0,
+                height : 0
+            })
+            property var headersVisible : (settings.showMeasures ? 1 : 0) + (settings.showKeyChanges ? 1 : 0) + (settings.showTempo ? 1 : 0) + (settings.showTempoMarks ? 1 : 0) + (settings.showTimeSig ? 1 : 0) + (settings.showRMarks ? 1 : 0)
+
+            x : 0
+            y : 0
+            width : 85 + (rows[0].length * canvasMain.rowHeight)
+            height : canvasMain.itemColumnWidth * (rows.length + headersVisible)
+            function setSize() {
+                // canvasMain.clearCanvas = true;
+                // canvasMain.requestPaint();
+                // delay(1000, function () {
+                mainBg.width = 85 + ((mainBg.rows[0].length - 1) * canvasMain.rowHeight);
+                mainBg.height = canvasMain.itemColumnWidth * (mainBg.rows.length + headersVisible);
+                canvasMain.requestPaint();
+                // });
+            }
+            MouseArea {
+                id : maRefresh
+                anchors.fill : parent
+                onClicked : {
+                    canvasHighlight.clearHighlight();
+                    buildViewModels();
+                    scoreInfo.tooltip = "Score " + curScore.name + " : Dur. " + formatTime(curScore.duration);
+                }
 
                 MouseArea {
                     anchors.fill : parent
+                    propagateComposedEvents : true
+                    property var pressed : ({})
                     onClicked : {
-                        rSelectionHighlight.width = 0;
-                    }
-                }
-                Item {
-                    x : 5
-                    Item {
-                        id : iMeasures
-                        property var rowHeight : 15
-                        height : btnToggleMeas.hdrVisible ? rowHeight : 0;
-
-                        Label {
-                            id : lblMeasure
-                            height : btnToggleMeas.hdrVisible ? iMeasures.rowHeight : 0;
-                            width : 60
-                            text : "Measures"
-                            horizontalAlignment : Text.AlignHCenter
-                            Rectangle {
-                                anchors.fill : parent
-                                color : "#a0a0a0"
-                                z : -1
-                            }
-                        }
-                        Item {
-                            id : headerRow
-                            x : 65
-                            width : acWin.width - 85
-                            height : btnToggleMeas.hdrVisible ? iMeasures.rowHeight : 0;
-
-                            Repeater {
-                                id : rMeasureHdr
-                                model : []
-                                Label {
-                                    id : lblMeasureHdr
-                                    width : (acWin.width - 85) / (rMeasureHdr.model.length)
-                                    x : rMeasureHdr.model[index] * width
-                                    wrapMode : Text.Wrap
-
-                                    text : rMeasureHdr.model[index] + 1
-                                    Component.onCompleted : {
-                                        mainBg.lastMeasureHdr = lblMeasureHdr;
-                                    }
-                                }
-                            }
-                        }
-                        Item {
-                            id : headerRow2
-                            x : 65
-                            width : acWin.width - 85
-                            height : btnToggleMeas.hdrVisible ? iMeasures.rowHeight : 0;
-
-                            Repeater {
-                                id : rMeasureHdr2
-                                model : []
-                                Label {
-                                    id : lblMeasureHdr2
-                                    width : (acWin.width - 85) / (rMeasureHdr.model.length)
-                                    x : rMeasureHdr2.model[index] * width
-                                    text : rMeasureHdr2.model[index] + 1
-                                }
-                            }
-                        }
-
-                    }
-
-                    Item {
-                        id : irMarks
-                        anchors.top : iMeasures.bottom
-                        property var rowHeight : 15
-                        height : btnToggleRM.rmVisible ? rowHeight : 0;
-                        Label {
-                            id : lblRMarks
-                            horizontalAlignment : Text.AlignHCenter
-                            height : btnToggleRM.rmVisible ? irMarks.rowHeight : 0;
-                            width : 60
-                            text : "R. Marks"
-                            Rectangle {
-                                anchors.fill : parent
-                                color : "#a0a0a0"
-                                z : -1
-                            }
-                        }
-
-                        Item {
-                            id : irehearsalMarks
-
-                            x : 65
-                            width : acWin.width - 85
-                            height : btnToggleRM.rmVisible ? irMarks.rowHeight : 0;
-
-                            Repeater {
-                                id : rrMarks
-                                model : []
-                                Label {
-                                    x : rrMarks.model[index].measure * (acWin.width - 85) / (measureTicks.length - 1)
-                                    height : btnToggleRM.rmVisible ? irMarks.rowHeight : 0;
-                                    width : (acWin.width - 85) / (measureTicks.length - 1)
-                                    text : rrMarks.model[index].text;
-                                }
-                            }
-                            Component.onCompleted : {
-                                mainBg.rMarks = rrMarks;
-                            }
-
-                        }
-
-                    }
-                    Column {
-                        id : column1
-                        anchors.top : irMarks.bottom
-                        property var rowHeight : (acWin.height - iMeasures.height - irMarks.height - 20) / rColumn.model.length
-                        property var fontRatio : rowHeight / 20
-                        height : acWin.height - iMeasures.height - irMarks.height - 20;
-                        width : acWin.width;
-                        Item {
-                            width : acWin.width;
-                            height : acWin.height - iMeasures.height - irMarks.height - 20;
-                            Repeater {
-                                id : rColumn
-                                model : []
-                                Item {
-                                    height : column1.rowHeight
-                                    Label {
-                                        id : lblcol1Tags
-                                        Rectangle {
-                                            anchors.fill : parent
-                                            color : "#c0c0c0"
-                                            z : -1
-                                        }
-                                        verticalAlignment : Text.AlignVCenter
-                                        y : index * column1.rowHeight
-                                        width : 60
-                                        height : column1.rowHeight
-                                        text : rColumn.model[index].name;
-                                        font.pointSize : Math.min(9, 9 * column1.fontRatio)
-                                    }
-                                    Item {
-
-                                        Row {
-                                            x : 65
-                                            y : index * column1.rowHeight
-                                            height : column1.rowHeight
-                                            width : acWin.width - 85
-                                            Item {
-                                                height : column1.rowHeight
-                                                width : acWin.width - 85
-                                                Repeater {
-                                                    id : rRows
-                                                    // property var measures : []
-
-                                                    model : []
-                                                    Rectangle {
-                                                        id : rMeasure
-                                                        color : rRows.model[index].hasNotes ? "#050505" : "#e0e0e0"
-                                                        z : -1
-                                                        width : (acWin.width - 85) / (measureTicks.length - 1)
-                                                        height : column1.rowHeight
-                                                        border.color : "DarkGray"
-                                                        border.width : 1
-                                                        x : index * width
-
-                                                        // Component.onCompleted : rRows.measures[index] = rMeasure;
-                                                    }
-
-                                                    Component.onCompleted : {
-                                                        mainBg.rows[index] = rRows;
-                                                    }
-                                                }
-
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Component.onCompleted : {
-                                mainBg.column = rColumn;
-                            }
-                            Rectangle {
-                                id : rSelectionHighlight
-                                color : "Blue"
-                                opacity : 0.5
-                            }
-
-                            MouseArea {
-                                anchors.fill : parent
-                                property var pressed : {}
-                                onPressed : {
-                                    rSelectionHighlight.color = "Blue";
-                                    var colWidth = (acWin.width - 85) / (measureTicks.length - 1)
-									if (mouse.x < 65 || mouse.x > acWin.width - 20) {
-                                        return;
-                                    }
-                                    if (mouse.y < 0 || mouse.y > column1.rowHeight * curScore.parts.length) {
-                                        return;
-                                    }
-                                    var x = mouse.x - 65;
-                                    var measure = Math.min(Math.floor(x / colWidth), measureTicks.length - 1);
-                                    var part = Math.min(Math.floor(mouse.y / column1.rowHeight), curScore.parts.length - 1)
-                                        pressed = {
-                                        measure : measure,
-                                        part : part
-                                    }
-                                    rSelectionHighlight.x = 65 + measure * colWidth;
-                                    rSelectionHighlight.width = colWidth;
-                                    rSelectionHighlight.y = part * column1.rowHeight;
-                                    rSelectionHighlight.height = column1.rowHeight;
-
-                                }
-                                onPositionChanged : {
-                                    var colWidth = (acWin.width - 85) / (measureTicks.length - 1)
-                                    if (mouse.x < 65 || mouse.x > 65 + colWidth * (measureTicks.length - 1)) {
-                                        return;
-                                    }
-                                    if (mouse.y < 0 || mouse.y > column1.rowHeight * curScore.parts.length) {
-                                        return;
-                                    }
-                                    var x = mouse.x - 65;
-                                    var measure = Math.min(Math.floor(x / colWidth), measureTicks.length - 1);
-                                    var part = Math.min(Math.floor(mouse.y / column1.rowHeight), curScore.parts.length - 1);
-
-                                    var startPart = Math.min(pressed.part, part);
-                                    var endPart = Math.max(pressed.part, part);
-                                    var startMeasure = Math.min(pressed.measure, measure);
-                                    var endMeasure = Math.max(pressed.measure, measure);
-
-                                    //Display the highlight
-                                    rSelectionHighlight.x = 65 + startMeasure * colWidth;
-                                    rSelectionHighlight.width = colWidth * (1 + endMeasure - startMeasure);
-                                    rSelectionHighlight.y = startPart * column1.rowHeight;
-                                    rSelectionHighlight.height = column1.rowHeight * (1 + endPart - startPart);
-                                }
-                                onReleased : {
-                                    var colWidth = (acWin.width - 85) / (measureTicks.length - 1)
-                                    if (mouse.x < 65 || mouse.x > 65 + colWidth * (measureTicks.length - 1)) {
-                                        return;
-                                    }
-                                    if (mouse.y < 0 || mouse.y > column1.rowHeight * curScore.parts.length) {
-                                        return;
-                                    }
-                                    var x = mouse.x - 65;
-                                    var measure = Math.min(Math.floor(x / colWidth), measureTicks.length - 1);
-                                    var part = Math.min(Math.floor(mouse.y / column1.rowHeight), curScore.parts.length - 1);
-
-                                    if (pressed.measure == measure && pressed.part == part) {
-                                        if (mouse.modifiers & Qt.ShiftModifier) {
-                                            cmd("escape");
-                                            cmd("escape");
-                                            delay(150, function () {
-                                                locatePartMeasure(part, measure);
-                                                selectPartMeasures(part, measure, part, measure);
-                                            });
-                                        } else {
-                                            cmd("escape");
-                                            cmd("escape");
-                                            delay(150, function () {
-                                                locatePartMeasure(part, measure);
-                                            });
-                                        }
-                                    } else {
-                                        var startPart = Math.min(pressed.part, part);
-                                        var endPart = Math.max(pressed.part, part);
-                                        var startMeasure = Math.min(pressed.measure, measure);
-                                        var endMeasure = Math.max(pressed.measure, measure);
-                                        cmd("escape");
-                                        cmd("escape");
-                                        delay(150, function () {
-                                            locatePartMeasure(startPart, startMeasure);
-                                            selectPartMeasures(startPart, startMeasure, endPart, endMeasure);
-                                        });
-                                    }
-                                    //hide the highlight
-                                    rSelectionHighlight.color = "yellow";
-                                }
-                            }
+                        if (mouse.x < mainBg.dataArea.x || mouse.y < mainBg.dataArea.y) {
+                            mouse.accepted = false;
+                            return;
                         }
                     }
-                }
+                    onPressed : {
 
-            }
-            Button {
-                id : btnToggleMeas
-                height : iMeasures.rowHeight
-                width : 10
-                anchors.right : mainBg.right
-                text : "-"
-                tooltip : "Show / hide measures"
-                property var hdrVisible : true
-                onClicked : {
-					btnToggleMeas.hdrVisible = !btnToggleMeas.hdrVisible;
-                    text = text == "-" ? "+" : "-";
-                    selectHeader();
-                }
+                        if (mouse.x < mainBg.dataArea.x || mouse.y < mainBg.dataArea.y) {
+                            return;
+                        }
+                        canvasHighlight.selecting = true;
+                        var measure = Math.floor((mouse.x - mainBg.dataArea.x) / canvasMain.itemColumnWidth);
+                        var part = Math.floor((mouse.y - mainBg.dataArea.y) / canvasMain.rowHeight);
+                        pressed = {
+                            measure : measure,
+                            part : part
+                        }
+                        canvasHighlight.selectedRect = {
+                            x : measure * canvasMain.itemColumnWidth,
+                            y : part * canvasMain.rowHeight,
+                            width : canvasMain.itemColumnWidth,
+                            height : canvasMain.rowHeight
+                        }
+                        canvasHighlight.requestPaint();
 
-            }
-            Button {
-                id : btnToggleRM
-                height : irMarks.rowHeight
-                width : 10
-                anchors.right : mainBg.right
-                y : iMeasures.rowHeight
-                text : "-"
-                tooltip : "Show / hide rehearsal marks"
-				property var rmVisible : true
-                onClicked : {
-                    text = text == "-" ? "+" : "-";
-                    btnToggleRM.rmVisible = !btnToggleRM.rmVisible;
-					lblRMarks.visible = btnToggleRM.rmVisible;
-                    irehearsalMarks.visible = btnToggleRM.rmVisible;
-                }
+                    }
+                    onPositionChanged : {
 
-            }
-            Row {
-                anchors.left : parent.left
-                anchors.bottom : parent.bottom
-                anchors.leftMargin : 5
-                anchors.bottomMargin : 3
-                Button {
-                    id : btnToggleAlwaysOnTop
+                        //Scroll content
+                        if (mouse.y > mainScrollView.height + mainScrollView.flickableItem.contentY - mainScrollView.__horizontalScrollBar.height && mouse.y < mainScrollView.flickableItem.contentHeight) {
+                            mainScrollView.flickableItem.contentY += canvasMain.rowHeight;
+                        }
 
-                    height : 15
-                    width : 15
-                    property var checked : true
-                    text : "^"
-                    tooltip : "Toggle always on top"
-                    onClicked : {
-                        checked = !checked
-                            if (checked) {
-                                acWin.flags |= Qt.WindowStaysOnTopHint;
+                        if (mouse.y < mainScrollView.flickableItem.contentY) {
+                            mainScrollView.flickableItem.contentY = Math.max(mainScrollView.flickableItem.contentY - canvasMain.rowHeight, 0);
+                        }
+
+                        if (mouse.x > mainScrollView.width + mainScrollView.flickableItem.contentX - mainScrollView.__verticalScrollBar.width && mouse.x < mainScrollView.flickableItem.contentWidth) {
+                            mainScrollView.flickableItem.contentX += canvasMain.itemColumnWidth;
+                        }
+
+                        if (mouse.x < mainScrollView.flickableItem.contentX && mainScrollView.flickableItem.contentX > 0) {
+                            mainScrollView.flickableItem.contentX = Math.max(mainScrollView.flickableItem.contentX - canvasMain.itemColumnWidth, 0);
+                        }
+
+                        if (mouse.x < mainBg.dataArea.x || mouse.y < mainBg.dataArea.y || mouse.x > mainBg.dataArea.x + mainBg.dataArea.width || mouse.y > mainBg.dataArea.y + mainBg.dataArea.height) {
+                            return;
+                        }
+
+                        var measure = Math.floor((mouse.x - mainBg.dataArea.x) / canvasMain.itemColumnWidth);
+                        var part = Math.floor((mouse.y - mainBg.dataArea.y) / canvasMain.rowHeight);
+
+                        var startPart = Math.min(pressed.part, part);
+                        var endPart = Math.max(pressed.part, part);
+                        var startMeasure = Math.min(pressed.measure, measure);
+                        var endMeasure = Math.max(pressed.measure, measure);
+
+                        canvasHighlight.selectedRect = {
+                            x : startMeasure * canvasMain.itemColumnWidth,
+                            y : startPart * canvasMain.rowHeight,
+                            width : (1 + endMeasure - startMeasure) * canvasMain.itemColumnWidth,
+                            height : (1 + endPart - startPart) * canvasMain.rowHeight
+                        }
+                        canvasHighlight.requestPaint();
+
+                    }
+                    onReleased : {
+                        if (mouse.x < mainBg.dataArea.x || mouse.y < mainBg.dataArea.y || mouse.x > mainBg.dataArea.x + mainBg.dataArea.width || mouse.y > mainBg.dataArea.y + mainBg.dataArea.height) {
+                            canvasHighlight.clearHighlight();
+                            return;
+                        }
+
+                        var measure = Math.floor((mouse.x - mainBg.dataArea.x) / canvasMain.itemColumnWidth);
+                        var part = Math.floor((mouse.y - mainBg.dataArea.y) / canvasMain.rowHeight);
+
+                        if (pressed.measure == measure && pressed.part == part) {
+                            if (mouse.modifiers & Qt.ControlModifier) {
+                                cmd("escape");
+                                cmd("escape");
+                                delay(150, function () {
+                                    locatePartMeasure(part, measure);
+                                    selectPartMeasures(part, measure, part, measure);
+                                });
                             } else {
-                                acWin.flags &= ~Qt.WindowStaysOnTopHint;
+                                cmd("escape");
+                                cmd("escape");
+                                delay(150, function () {
+                                    locatePartMeasure(part, measure);
+                                });
                             }
-                    }
-                    Rectangle {
-                        anchors.fill : parent
-                        color : "White"
-                        radius : 6
-                        opacity : btnToggleAlwaysOnTop.checked ? 0 : 0.5
+                        } else {
+                            var startPart = Math.min(pressed.part, part);
+                            var endPart = Math.max(pressed.part, part);
+                            var startMeasure = Math.min(pressed.measure, measure);
+                            var endMeasure = Math.max(pressed.measure, measure);
+                            cmd("escape");
+                            cmd("escape");
+                            delay(150, function () {
+                                locatePartMeasure(startPart, startMeasure);
+                                selectPartMeasures(startPart, startMeasure, endPart, endMeasure);
+                            });
+                        }
+
+                        canvasHighlight.selecting = false;
+                        canvasHighlight.requestPaint();
+
                     }
                 }
             }
-            Label {
-                id : lblDur
-                anchors.right : parent.right
-                anchors.bottom : parent.bottom
-                anchors.leftMargin : 5
-                anchors.rightMargin : 5
-                anchors.bottomMargin : 5
-                text : "Dur. " + Math.floor(curScore.duration / 60) + ":" + (curScore.duration % 60)
+            Canvas {
+                anchors.fill : parent
+                id : canvasMain
+                property var rowHeight : 15
+                property var column1Width : 60
+                property var itemColumnWidth : 15
+                property var textSize : 8.5
+
+                onPaint : {
+                    var ctx = getContext("2d");
+                    ctx.clearRect(0, 0, canvasMain.width, canvasMain.height);
+
+                    var x = 5;
+                    var y = 0;
+
+                    ctx.font = textSize + "pt sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "top";
+                    ctx.strokeStyle = "DarkGray"
+
+                        var centerTextX = x + (column1Width / 2);
+
+                    var titles = ["Measures", "Key Change", "Tempo", "Tempo M", "Time Sig", "R. Marks"]
+                    var show = [settings.showMeasures, settings.showKeyChanges, settings.showTempo, settings.showTempoMarks, settings.showTimeSig, settings.showRMarks]
+
+                    //Column 1
+
+                    //Column Titles
+                    var rowCount = 0;
+                    for (var i = 0; i < titles.length; i++) {
+                        if (show[i]) {
+                            y = rowCount * rowHeight;
+                            ctx.fillStyle = "DarkGray";
+                            ctx.fillRect(x, y, column1Width, rowHeight)
+                            ctx.fillStyle = "Black";
+                            ctx.fillText(titles[i], centerTextX, y)
+                            rowCount++;
+                        }
+                    }
+                    //Instrument Names
+                    for (var i = 0; i < mainBg.column1.length; i++) {
+                        y = (rowCount + i) * rowHeight;
+                        ctx.fillStyle = "LightGray";
+                        ctx.fillRect(x, y, column1Width, rowHeight)
+                        ctx.fillStyle = "Black";
+                        ctx.fillText(mainBg.column1[i].name, centerTextX, y)
+                    }
+
+                    //Rows
+
+                    //Measures
+                    y = 0;
+                    var xOffset = 70 + itemColumnWidth / 2;
+                    if (settings.showMeasures) {
+                        for (var i = 0; i < mainBg.measureHdr.length; i++) {
+                            x = xOffset + mainBg.measureHdr[i] * itemColumnWidth;
+                            ctx.fillText(mainBg.measureHdr[i] + 1, x, y)
+                        }
+                        y += rowHeight;
+                    }
+                    xOffset = 70;
+                    if (settings.showKeyChanges) {
+                        for (var i = 0; i < mainBg.keyChanges.length; i++) {
+                            x = xOffset + mainBg.keyChanges[i].measure * itemColumnWidth;
+                            var tm = textMetrics(mainBg.keyChanges[i].text, ctx.font, mainBg, "Transparent");
+                            ctx.fillStyle = "White";
+                            ctx.fillRect(x, y, tm.width, tm.height);
+                            ctx.strokeRect(x, y, tm.width, tm.height)
+                            ctx.fillStyle = "Black";
+                            ctx.fillText(mainBg.keyChanges[i].text, x + tm.width / 2, y)
+                        }
+                        y += rowHeight;
+                    }
+
+                    //Tempo Text
+                    if (settings.showTempo) {
+                        ctx.textAlign = "left";
+                        for (var i = 0; i < mainBg.tempos.length; i++) {
+                            x = xOffset + mainBg.tempos[i].measure * itemColumnWidth;
+                            ctx.fillText(mainBg.tempos[i].text, x, y)
+                        }
+                        y += rowHeight;
+                    }
+                    //Tempo Text
+                    if (settings.showTempoMarks) {
+                        ctx.textAlign = "center";
+                        for (var i = 0; i < mainBg.tempoMarks.length; i++) {
+                            x = xOffset + mainBg.tempoMarks[i].measure * itemColumnWidth;
+                            var tm = textMetrics(mainBg.tempoMarks[i].text, ctx.font, mainBg, "Transparent")
+                                ctx.fillStyle = "White";
+                            ctx.fillRect(x, y, tm.width, tm.height);
+                            ctx.strokeRect(x, y, tm.width, tm.height)
+                            ctx.fillStyle = "Black";
+                            ctx.fillText(mainBg.tempoMarks[i].text, x + tm.width / 2, y)
+                        }
+                        y += rowHeight;
+                    }
+                    //Time Sig
+                    if (settings.showTimeSig) {
+                        ctx.textAlign = "center";
+                        for (var i = 0; i < mainBg.timeSigs.length; i++) {
+                            x = xOffset + mainBg.timeSigs[i].measure * itemColumnWidth;
+                            var tm = textMetrics(mainBg.timeSigs[i].text, ctx.font, mainBg, "Transparent")
+                                ctx.fillStyle = "White";
+                            ctx.fillRect(x, y, tm.width, tm.height);
+                            ctx.strokeRect(x, y, tm.width, tm.height)
+                            ctx.fillStyle = "Black";
+                            ctx.fillText(mainBg.timeSigs[i].text, x + tm.width / 2, y)
+                        }
+                        y += rowHeight;
+                    }
+                    //Rehearsal Marks
+                    if (settings.showRMarks) {
+                        ctx.textAlign = "center";
+                        for (var i = 0; i < mainBg.rMarks.length; i++) {
+                            x = xOffset + mainBg.rMarks[i].measure * itemColumnWidth;
+                            var tm = textMetrics(mainBg.rMarks[i].text, ctx.font, mainBg, "Transparent");
+                            ctx.fillStyle = "White";
+                            x = x + (itemColumnWidth - tm.width) / 2;
+                            ctx.fillRect(x, y, tm.width, tm.height);
+                            ctx.strokeRect(x, y, tm.width, tm.height)
+                            ctx.fillStyle = "Black";
+                            ctx.fillText(mainBg.rMarks[i].text, x + tm.width / 2, y)
+                        }
+                        y += rowHeight;
+                    }
+
+                    var dataY = y;
+                    //RowData
+
+                    for (var i = 0; i < mainBg.rows.length; i++) {
+                        for (var j = 0; j < mainBg.rows[i].length; j++) {
+                            x = xOffset + j * itemColumnWidth;
+                            if (mainBg.rows[i][j].hasNotes) {
+                                ctx.fillRect(x + 1, y + 1, itemColumnWidth - 1, rowHeight - 1);
+                            }
+                        }
+                        y += rowHeight;
+                    }
+
+                    // Draw boxes
+                    y = dataY;
+                    ctx.strokeStyle = "DarkGray"
+                        ctx.beginPath()
+                        for (var i = 0; i <= mainBg.rows.length; i++) {
+                            ctx.moveTo(xOffset, y);
+                            ctx.lineTo(parent.width, y)
+                            y += rowHeight;
+                        }
+                        x = xOffset;
+                    for (var i = 0; i <= mainBg.rows[0].length; i++) {
+                        ctx.moveTo(x, dataY);
+                        ctx.lineTo(x, parent.height)
+                        x += itemColumnWidth;
+                    }
+
+                    ctx.stroke();
+
+                    mainBg.dataArea = {
+                        x : xOffset,
+                        y : dataY,
+                        width : parent.width - xOffset,
+                        height : parent.height - dataY
+                    };
+                    canvasPartNames.requestPaint();
+                }
             }
-        }
+            Canvas {
+                anchors.fill : parent
+                id : canvasHighlight
+                property var selectedRect : ({
+                    x : 0,
+                    y : 0,
+                    width : 0,
+                    height : 0
+                })
+                property var selecting : false;
+                function clearHighlight() {
+                    selecting = false;
+                    selectedRect.width = 0;
+                    selectedRect.height = 0;
+                    requestPaint();
+                }
+                onPaint : {
+                    var ctx = getContext("2d");
+                    ctx.clearRect(0, 0, parent.width, parent.height);
+                    if (selecting) {
+                        ctx.fillStyle = 'rgba(0,0,255,0.4)';
+                    } else {
+                        ctx.fillStyle = 'rgba(255,255,0,0.4)';
+                    }
+                    ctx.fillRect(mainBg.dataArea.x + selectedRect.x, mainBg.dataArea.y + selectedRect.y, selectedRect.width, selectedRect.height);
+                }
+            }
+            Canvas {
 
-        onWidthChanged : {
-            rSelectionHighlight.width = 0;
-            selectHeader();
+                id : canvasPartNames
+                x : 5
+                y : mainBg.dataArea.y
+                width : canvasMain.column1Width
+                height : mainBg.dataArea.height
+                visible : false
+                onPaint : {
+                    var ctx = getContext("2d");
+                    ctx.font = canvasMain.textSize + "pt sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "top";
+                    //Instrument Names
+                    var x = 0;
+                    var y = 0;
+                    var centerTextX = (canvasMain.column1Width / 2);
+                    for (var i = 0; i < mainBg.column1.length; i++) {
+                        y = i * canvasMain.rowHeight;
+                        ctx.fillStyle = "rgba(211,211,211,0.8)"; ;
+                        ctx.fillRect(x, y, canvasMain.column1Width, canvasMain.rowHeight)
+                        ctx.fillStyle = "rgba(0,0,0,0.9)";
+                        ctx.fillText(mainBg.column1[i].name, centerTextX, y)
+                    }
 
-        }
-        onHeightChanged : {
-            rSelectionHighlight.width = 0;
-
-        }
-        onActiveChanged : {
-            if (active) {
-                lblDur.text = "Dur. " + formatTime(curScore.duration);
-                buildViewModels();
-            };
-        }
-        Component.onCompleted : {
-            flags |= Qt.WindowStaysOnTopHint
-        }
-
-        onClosing : {
-            if (timers.timers) {
-                timers.timer.stop()
-            };
-            winAbout.close();
-
-            settings["winx"] = acWin.x;
-            settings["winy"] = acWin.y;
-            settings["winh"] = acWin.height;
-            settings["winw"] = acWin.width;
-            saveSettings();
-            Qt.quit();
-
+                }
+            }
         }
     }
+    Component.onCompleted : init();
+    Button {
+        id : btnToggleMeas
+        height : canvasMain.rowHeight
+        width : 10
+        anchors.left : mainScrollView.right
+        tooltip : "Show / hide measures"
+        property var hdrVisible : settings.showMeasures
+        text : hdrVisible ? "-" : "+"
+        onClicked : {
+            hdrVisible = !hdrVisible;
+            settings.showMeasures = hdrVisible;
+            text = hdrVisible ? "-" : "+";
+            mainBg.setSize();
+        }
+    }
+    Button {
+        id : btnToggleKC
+        height : canvasMain.rowHeight
+        width : 10
+        anchors.left : mainScrollView.right
+        y : 15
+        tooltip : "Show / hide key signatures"
+        property var kcVisible : settings.showKeyChanges
+        text : kcVisible ? "-" : "+"
+        onClicked : {
+            kcVisible = !kcVisible;
+            text : kcVisible ? "-" : "+"
+            settings.showKeyChanges = kcVisible;
+            mainBg.setSize();
+        }
 
-    Window {
-        id : winAbout
-        title : "About"
-        width : 320
-        height : 250
-        minimumWidth : 320
-        minimumHeight : 250
-        maximumWidth : 320
-        maximumHeight : 250
+    }
+    Button {
+        id : btnToggleTO
+        height : canvasMain.rowHeight
+        width : 10
+        anchors.left : mainScrollView.right
+        y : 30
+        tooltip : "Show / hide tempo text"
+        property var toVisible : settings.showTempo
+        text : toVisible ? "-" : "+"
+        onClicked : {
+            toVisible = !toVisible;
+            text : toVisible ? "-" : "+"
+            settings.showTempo = toVisible;
+            mainBg.setSize();
+        }
 
-        Rectangle {
-            anchors.fill : parent
-            gradient : Gradient {
-                GradientStop {
-                    position : 0.0;
-                    color : "lightsteelblue"
-                }
-                GradientStop {
-                    position : 1.0;
-                    color : "lightskyblue"
-                }
+    }
+    Button {
+        id : btnToggleTM
+        height : canvasMain.rowHeight
+        width : 10
+        anchors.left : mainScrollView.right
+        y : 45
+        tooltip : "Show / hide tempo marks"
+        property var tmVisible : settings.showTempoMarks
+        text : tmVisible ? "-" : "+"
+        onClicked : {
+            tmVisible = !tmVisible;
+            text : tmVisible ? "-" : "+"
+            settings.showTempoMarks = tmVisible;
+            mainBg.setSize();
+        }
+
+    }
+
+    Button {
+        id : btnToggleTS
+        height : canvasMain.rowHeight
+        width : 10
+        anchors.left : mainScrollView.right
+        y : 60
+        tooltip : "Show / hide time Sigs"
+        property var tsVisible : settings.showTimeSig
+        text : tsVisible ? "-" : "+"
+        onClicked : {
+            tsVisible = !tsVisible;
+            text : tsVisible ? "-" : "+"
+            settings.showTimeSig = tsVisible;
+            mainBg.setSize();
+        }
+
+    }
+    Button {
+        id : btnToggleRM
+        height : canvasMain.rowHeight
+        width : 10
+        anchors.left : mainScrollView.right
+        y : 75
+        tooltip : "Show / hide rehearsal marks"
+        property var rmVisible : settings.showRMarks
+        text : rmVisible ? "-" : "+"
+        onClicked : {
+            rmVisible = !rmVisible;
+            text : rmVisible ? "-" : "+"
+            settings.showRMarks = rmVisible;
+            mainBg.setSize();
+        }
+
+    }
+
+    Button {
+        id : scoreInfo
+        anchors.left : mainScrollView.right
+        anchors.bottom : mainScrollView.bottom
+        width : 10
+        text : "i"
+        style : ButtonStyle {
+            background : Rectangle {
+                anchors.fill : parent
+                border.width : 1
+                border.color : "#888"
+                radius : 4
+                color : "#eee"
+            }
+            label : Label {
+                color : "Blue";
+                font.pointSize : 12
+                text : "i"
             }
         }
-        Text {
-            id : winAboutTxt
-            x : 0
-            y : 0
-            width : 300
-            height : 250
-            color : "darkturquoise"
-            style : Text.Outline;
-            styleColor : "#404040"
-            text : "<h1>editGtrChords part of gtrChords</h1><br><br><h4>plugin for MuseScore</h4><br><br><h3>(c) 2016 - stevel05</h3>"
-            wrapMode : Text.Wrap
-            verticalAlignment : Text.AlignVCenter
-            horizontalAlignment : Text.AlignHCenter
-        }
-        Button {
-            anchors.horizontalCenter : parent.horizontalCenter
-            y : parent.height - 40
-            text : "OK"
-            onClicked : winAbout.close();
-        }
+        tooltip : "Score " + curScore.name + " : Dur. " + formatTime(curScore.duration)
     }
 
     //
     //@ functions
     //
     function init() {
-        loadSettings();
-        acWin.show();
-        //Fix for known bug where dropdowns can appear on the wrong screen if the window is opened on a second screen
-        acWin.x++;
-        acWin.x--;
-        //
-
-        getMeasureTicks();
-
+        buildViewModels();
+    }
+    function textMetrics(text, font, oParent, color) {
+        var txt = Qt.createQmlObject("import QtQuick 2.3; Text {}", oParent);
+        txt.color = color;
+        txt.text = text;
+        txt.font = font;
+        delay(0, txt.destroy)
+        return {
+            width : txt.width,
+            height : txt.height
+        }
     }
 
     function buildViewModels() {
@@ -516,17 +611,8 @@ MuseScore {
         //Refresh the measure ticks
         getMeasureTicks();
 
-        //Clear the rows models before we start
-        for (var i = 0; i < mainBg.column.model.length; i++) {
-            mainBg.rows[i].model = [];
-        }
-        //Clear the column models
-        mainBg.column.model = [];
-        mainBg.rMarks.model = [];
-        rMarks = [];
-
         var m = [];
-        var rowsModel = [];
+        var rows = [];
         trackMeasures = [];
 
         var initTm = [];
@@ -551,47 +637,96 @@ MuseScore {
                 endTrack : curScore.parts[i].endTrack
             })
             //Initialize as 2d arrays
-            rowsModel[i] = initRm.slice(0);
+            rows[i] = initRm.slice(0);
         }
-        mainBg.column.model = m;
+        mainBg.column1 = m;
 
-        var seg = curScore.firstSegment(Segment.ChordRest);
         var curMeasure =  - 1;
         var hasNotes = false;
         var measureDone = false;
         var rMarks = [];
-        while (seg) {
-            curMeasure = currentMeasure(seg.tick);
-
-            //Store the measure and text of the rehearsal marks.
-            for (var i = 0; i < seg.annotations.length; i++) {
-                if (seg.annotations[i].type == Element.REHEARSAL_MARK) {
-                    rMarks.push({
-                        measure : curMeasure,
-                        text : seg.annotations[i].text
-                    })
-                }
-            }
-            seg = seg.next;
-        }
+        var timeSigs = [];
+        var keyChanges = [];
+        var tempos = [];
+        var tempoMarks = [];
 
         var measure = curScore.firstMeasure;
         while (measure) {
-            seg = measure.firstSegment;
+            var seg = measure.firstSegment;
             while (seg) {
                 curMeasure = currentMeasure(seg.tick);
+                if (seg.segmentType == Segment.TimeSig) {
+                    timeSigs.push({
+                        measure : curMeasure,
+                        text : seg.elementAt(0).numerator + "/" + seg.elementAt(0).denominator
+                    });
+                }
+
+                //Store the measure and text of the rehearsal marks.
+                if (seg.annotations.length < 1000) {
+                    for (var i = 0; i < seg.annotations.length; i++) {
+                        if (seg.annotations[i].type == Element.REHEARSAL_MARK) {
+                            rMarks.push({
+                                measure : curMeasure,
+                                text : seg.annotations[i].text.replace(/<[^>]*>?/g, "")
+                            })
+                        }
+                        //Tempos
+                        if (seg.annotations[i].type == Element.TEMPO_TEXT) {
+                            var text = "";
+                            var parts = seg.annotations[i].text.split("=");
+                            switch (true) {
+                            case parts[0].indexOf("Quarter") > -1:
+                                text += "4";
+                                break;
+                            case parts[0].indexOf("Half") > -1:
+                                text += "2";
+                                break;
+
+                            case parts[0].indexOf("8th") > -1:
+                                text += "8";
+                                break;
+                            }
+                            if (parts[0].indexOf("Dot") > -1) {
+                                text += ".";
+                            }
+                            text += " = " + parts[1]
+                            tempoMarks.push({
+                                measure : curMeasure,
+                                text : text
+                            })
+                        }
+                        //Tempos
+                        if (seg.annotations[i].type == Element.STAFF_TEXT && seg.annotations[i].textStyleType == 16) {
+                            tempos.push({
+                                measure : curMeasure,
+                                text : seg.annotations[i].text
+                            })
+                        }
+                    }
+                } else {
+                    console.log("Could not read annotations @ measure", curMeasure + 1,"Tick",seg.tick,"Annotation length = ", seg.annotations.length);
+                }
+                //Cannot yet get key signatures.
+                if (seg.segmentType == Segment.KeySig) {
+                    keyChanges.push({
+                        measure : curMeasure,
+                        text : "KS"
+                    })
+                }
+
                 //For each part, store whether each measure has notes, and on which tracks.  Used for the automated selection in selectPartMeasures.
                 for (var i = 0; i < curScore.parts.length; i++) {
                     var partData = curScore.parts[i];
-                    hasNotes = rowsModel[i][curMeasure].hasNotes;
-                    measureDone = rowsModel[i][curMeasure].done;
+                    hasNotes = rows[i][curMeasure].hasNotes;
+                    measureDone = rows[i][curMeasure].done;
                     if (!(measureDone && hasNotes)) {
                         for (var j = partData.startTrack; j < partData.endTrack; j++) {
 
                             if (seg.elementAt(j) && (seg.elementAt(j).type == Element.CHORD || seg.elementAt(j).type == Element.REST)) {
-                                //Drives the selection routines, if a track has more than 1 rest or notes.
+                                //Drives the selection routines, if a track has more than 1 rest or note.
                                 trackMeasures[j][curMeasure]++;
-                                if (trackMeasures[j][curMeasure] > 1) {
+                                if (trackMeasures[j][curMeasure] > 1 && curMeasure + 1 != curScore.nmeasures) {
                                     measureDone = true;
                                 }
 
@@ -602,7 +737,7 @@ MuseScore {
                             }
 
                             //Drives the GUI image, shaded if part hasNotes
-                            rowsModel[i][curMeasure] = {
+                            rows[i][curMeasure] = {
                                 hasNotes : hasNotes,
                                 done : measureDone
                             };
@@ -613,7 +748,6 @@ MuseScore {
                         }
                     }
                 }
-
                 seg = seg.next;
                 //finished with this measure
                 if (seg.tick >= measure.lastSegment.tick) {
@@ -622,49 +756,30 @@ MuseScore {
             }
             measure = measure.nextMeasure;
         }
-        // listProperty(trackMeasures[12])
-
-        for (var i = 0; i < rowsModel.length; i++) {
-            mainBg.rows[i].model = rowsModel[i];
+        mainBg.rows = [];
+        for (var i = 0; i < rows.length; i++) {
+            mainBg.rows[i] = rows[i];
         }
-        mainBg.rMarks.model = rMarks;
-        rMeasureHdr.model = [];
+        mainBg.rMarks = rMarks;
+        mainBg.timeSigs = timeSigs;
+        mainBg.tempos = tempos;
+        mainBg.tempoMarks = tempoMarks;
+        mainBg.keyChanges = keyChanges;
+        mainBg.measureHdr = [];
 
-        var m = [];
-        for (var i = 0; i < measureTicks.length - 1; i++) {
-            m.push(i);
-        }
-        rMeasureHdr.model = m;
-
-        rMeasureHdr2.model = [];
-        var m = [];
-        m.push(0)
-        for (var i = 4; i < measureTicks.length - 1; i += 5) {
-            m.push(i);
-        }
-        rMeasureHdr2.model = m;
-		selectHeader();
-    }
-    function selectHeader() {
-        if (!mainBg.lastMeasureHdr) {
-            return;
-        }
-        if (btnToggleMeas.hdrVisible) {
-			lblMeasure.visible = true;
-            if (mainBg.lastMeasureHdr.lineCount > 1) {
-                headerRow.visible = false;
-                headerRow2.visible = true;
-
-            } else {
-                headerRow.visible = true;
-                headerRow2.visible = false;
+        if (measureTicks.length < 99) {
+            for (var i = 0; i < measureTicks.length - 1; i++) {
+                mainBg.measureHdr.push(i);
             }
         } else {
-			lblMeasure.visible = false;
-            headerRow.visible = false;
-			headerRow2.visible = false;
+            mainBg.measureHdr.push(0)
+            for (var i = 4; i < measureTicks.length - 1; i += 5) {
+                mainBg.measureHdr.push(i);
+            }
         }
+        mainBg.setSize();
     }
+
     //Move the cursor to the specified tick in the score.
     function positionCursor(cursor, targetTick) {
         cursor.rewind(0);
@@ -773,13 +888,16 @@ MuseScore {
 
         var moveMeasures = 1 + endMeasure - startMeasure;
 
-        //If the first measure of the last part of the selected area starts on a bar with 1 element (note or rest), and the last measure of the last part of the selected area starts on a bar with 1 elementwe need one less move.
+        var startMeasureCount = combineTrackMeasures(partObj, startMeasure);
+        var endMeasureCount = combineTrackMeasures(partObj, endMeasure);
 
-        if (trackMeasures[partObj.startTrack][startMeasure] == 1 && trackMeasures[partObj.startTrack][endMeasure] == 1) {
+        //If the first measure of the last part of the selected area starts on a bar with 1 element (note or rest), and the last measure of the last part of the selected area starts on a bar with 1 element we need one less move.
+
+        if (startMeasureCount == 1 && endMeasureCount == 1) {
             moveMeasures--;
         } else {
             //If more than one part is selected and the first measure of the last track has only one element, we need one less move.
-            if (startPart !== endPart && trackMeasures[partObj.startTrack][startMeasure] == 1) {
+            if (startPart !== endPart && startMeasureCount == 1) {
                 moveMeasures--;
             }
         }
@@ -787,48 +905,33 @@ MuseScore {
         for (var i = 0; i < moveMeasures; i++) {
             cmd("select-next-measure");
         }
-		
-		//If selecting a single measure on one part, ant that measure has one element, we need to do additional work to select it.
-		if(startMeasure == endMeasure && startPart == endPart && trackMeasures[partObj.startTrack][startMeasure] == 1){
-			if(endPart == curScore.parts.length - 1){
-				cmd("select-staff-below");
-			}
-			else{
-				cmd("select-staff-below");
-				cmd("select-staff-above");
-			}
-		}
 
-    }
-    function loadSettings() {
-
-        file.source = filePath + "/" + "scoreOverView.ini";
-        var found = false;
-        if (file.exists()) {
-            try {
-                settings = JSON.parse(file.read());
-                found = true;
-            } catch (e) {
-                found = false;
+        //If selecting a single measure on one part, and that measure has one element, we need to do additional work to select it.
+        if (startMeasure == endMeasure && startPart == endPart && startMeasureCount == 1) {
+            if (endPart == curScore.parts.length - 1) {
+                cmd("select-staff-below");
+            } else {
+                cmd("select-staff-below");
+                cmd("select-staff-above");
             }
         }
 
-        if (found) {
-            acWin.x = settings["winx"];
-            acWin.y = settings["winy"];
-            acWin.height = settings["winh"];
-            acWin.width = settings["winw"];
-        } else {
-            settings["winx"] = acWin.x;
-            settings["winy"] = acWin.y;
-            settings["winh"] = acWin.height;
-            settings["winw"] = acWin.width;
-            saveSettings();
+        //If selecting the last measure and the last part has more than one element.
+        if (startMeasure == endMeasure && endMeasure == curScore.nmeasures - 1 && endMeasureCount > 1) {
+            for (var i = 0; i < endMeasureCount; i++) {
+                cmd("select-next-chord")
+            }
         }
+
     }
-    function saveSettings() {
-        file.source = filePath + "/" + "scoreOverView.ini";
-        file.write(JSON.stringify(settings));
+
+    function combineTrackMeasures(partObj, measure) {
+        var count = 0;
+        //if a part has more than one stave, we only want to count the last stave, that's where the selection will be.
+        for (var i = partObj.endTrack - 4; i < partObj.endTrack; i++) {
+            count = Math.max(trackMeasures[i][measure], count);
+        }
+        return count;
     }
 
     //
@@ -839,9 +942,8 @@ MuseScore {
         return measureTicks[curMeas + 1] - measureTicks[curMeas];
     }
 
-    //
-    //Utility function to query a javascipt object.
-    //
+    // Utility function to query a javascipt object.
+
     function listProperty(item, title, iterations, level) {
         level = level == undefined ? 0 : level;
         iterations = iterations == undefined ? 1 : iterations;
@@ -893,7 +995,7 @@ MuseScore {
     //Define other qt.objects
     //
     function timer() {
-        return Qt.createQmlObject("import QtQuick 2.0; Timer {}", acWin);
+        return Qt.createQmlObject("import QtQuick 2.0; Timer {}", parent);
     }
     FileIO {
         id : file
